@@ -24,6 +24,7 @@ input::placeholder{color:#444}
 .cv{font-size:20px;font-weight:800;color:#fff}
 .cv.kn{color:#facc15}.cv.ki{color:#fb923c}.cv.dim{color:#333}
 .cv.gok{color:#22c55e;font-size:12px}.cv.gbad{color:#ef4444;font-size:12px}
+.cv.gyellow{color:#facc15;font-size:12px}
 #statusbar{background:#0f0f0f;padding:5px 10px;display:flex;align-items:center;gap:6px;flex-shrink:0}
 .dot{width:8px;height:8px;border-radius:50%;background:#ef4444;flex-shrink:0}
 .dot.ok{background:#22c55e}
@@ -78,10 +79,39 @@ var ws=null,mSaya=null,mTujuan=null,rLine=null;
 var glat=null,glng=null,gpsOk=false;
 var bln=[],bidx=0,wsOk=false,bMarkers=[];
 
-// GPS pakai Capacitor Geolocation - minta izin otomatis
+// ─── Adaptive Accuracy Threshold ────────────────────────────────────────────
+// Di area terbuka GPS bisa < 10m, di kota padat bisa 30-50m.
+// Daripada pakai batas keras 20m yang sering gagal di kota,
+// sistem ini belajar dari kondisi lokal secara real-time.
+var accHistory = [];          // riwayat 10 reading terakhir
+var adaptiveThreshold = 20;   // mulai dari 20m, akan menyesuaikan
+var lastSentTime = 0;
+
+function updateAdaptiveThreshold(acc) {
+  accHistory.push(acc);
+  if (accHistory.length > 10) accHistory.shift();
+
+  // Ambil median dari riwayat
+  var sorted = accHistory.slice().sort(function(a,b){return a-b;});
+  var median = sorted[Math.floor(sorted.length/2)];
+
+  // Threshold = median * 1.5, dibatasi antara 20m dan 50m
+  // Logika: jika kondisi GPS memang jelek, longgarkan batas
+  // agar data tetap mengalir, tapi jangan terlalu longgar
+  var newThreshold = Math.min(50, Math.max(20, median * 1.5));
+
+  // Update perlahan (smooth), tidak langsung lompat
+  adaptiveThreshold = adaptiveThreshold * 0.7 + newThreshold * 0.3;
+}
+
+function shouldSendGPS(acc) {
+  updateAdaptiveThreshold(acc);
+  return acc <= adaptiveThreshold;
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 async function startGPS() {
   try {
-    // Minta izin dulu
     const perm = await Geolocation.requestPermissions();
     if (perm.location !== 'granted') {
       toast('Izin GPS ditolak!');
@@ -89,51 +119,73 @@ async function startGPS() {
       document.getElementById('vg').className='cv gbad';
       return;
     }
-    // Watch position
     await Geolocation.watchPosition({
       enableHighAccuracy: true,
       timeout: 15000
-    }, (pos, err) => {
+    }, function(pos, err) {
       if (err) {
         document.getElementById('vg').textContent='Error';
         document.getElementById('vg').className='cv gbad';
         return;
       }
-      glat=pos.coords.latitude;
-      glng=pos.coords.longitude;
-      gpsOk=true;
-      var acc=pos.coords.accuracy?Math.round(pos.coords.accuracy)+'m':'?';
-      document.getElementById('vg').textContent='OK (+-'+acc+')';
-      document.getElementById('vg').className='cv gok';
-      if(!mSaya){
-        mSaya=L.marker([glat,glng],{icon:iconSaya,zIndexOffset:1000}).addTo(map).bindPopup('<b>Posisi Saya</b>');
-        map.setView([glat,glng],16);
-      } else { mSaya.setLatLng([glat,glng]); }
-      updJarak();
+      handleGPSUpdate(pos);
     });
   } catch(e) {
-    // Fallback ke navigator.geolocation
     if(navigator.geolocation){
-      navigator.geolocation.watchPosition(function(pos){
-        glat=pos.coords.latitude;glng=pos.coords.longitude;gpsOk=true;
-        var acc=pos.coords.accuracy?Math.round(pos.coords.accuracy)+'m':'?';
-        document.getElementById('vg').textContent='OK (+-'+acc+')';
-        document.getElementById('vg').className='cv gok';
-        if(!mSaya){mSaya=L.marker([glat,glng],{icon:iconSaya,zIndexOffset:1000}).addTo(map).bindPopup('<b>Posisi Saya</b>');map.setView([glat,glng],16);}
-        else{mSaya.setLatLng([glat,glng]);}
-        updJarak();
-      },function(err){
-        document.getElementById('vg').textContent='Error';
-        document.getElementById('vg').className='cv gbad';
-        toast('GPS: '+err.message);
-      },{enableHighAccuracy:true,timeout:15000,maximumAge:2000});
+      navigator.geolocation.watchPosition(
+        function(pos){ handleGPSUpdate(pos); },
+        function(err){
+          document.getElementById('vg').textContent='Error';
+          document.getElementById('vg').className='cv gbad';
+          toast('GPS: '+err.message);
+        },
+        {enableHighAccuracy:true,timeout:15000,maximumAge:2000}
+      );
     }
+  }
+}
+
+function handleGPSUpdate(pos) {
+  var lat = pos.coords.latitude;
+  var lng = pos.coords.longitude;
+  var acc = pos.coords.accuracy ? pos.coords.accuracy : 999;
+
+  // Selalu tampilkan posisi di peta tanpa syarat akurasi
+  // (agar pengguna tetap melihat posisi meski GPS sedang buruk)
+  glat = lat;
+  glng = lng;
+  if(!mSaya){
+    mSaya=L.marker([glat,glng],{icon:iconSaya,zIndexOffset:1000}).addTo(map).bindPopup('<b>Posisi Saya</b>');
+    map.setView([glat,glng],16);
+  } else { mSaya.setLatLng([glat,glng]); }
+  updJarak();
+
+  var thr = Math.round(adaptiveThreshold);
+  updateAdaptiveThreshold(acc); // update threshold dari reading ini
+
+  if (shouldSendGPS(acc)) {
+    // Akurasi lolos threshold → kirim ke ESP32, tandai GPS hijau
+    gpsOk = true;
+    document.getElementById('vg').textContent='OK (±'+Math.round(acc)+'m)';
+    document.getElementById('vg').className='cv gok';
+  } else {
+    // Akurasi di luar threshold → tahan pengiriman, tandai GPS kuning
+    // Posisi di peta tetap diupdate, tapi ESP32 tidak dibanjiri data buruk
+    document.getElementById('vg').textContent='Lemah ('+Math.round(acc)+'m)';
+    document.getElementById('vg').className='cv gyellow';
+    // gpsOk tetap true jika sebelumnya sudah pernah dapat sinyal bagus,
+    // sehingga fitur rute & tujuan tidak terblokir
   }
 }
 
 startGPS();
 
-setInterval(function(){if(ws&&ws.readyState===1&&gpsOk)ws.send(JSON.stringify({type:'posisi',lat:glat,lng:glng}));},1500);
+// Kirim posisi ke ESP32 hanya jika GPS OK (lolos threshold adaptif)
+setInterval(function(){
+  if(ws&&ws.readyState===1&&gpsOk&&glat!==null){
+    ws.send(JSON.stringify({type:'posisi',lat:glat,lng:glng}));
+  }
+},1500);
 
 function updJarak(){
   if(!bln.length||bidx>=bln.length||!gpsOk)return;
