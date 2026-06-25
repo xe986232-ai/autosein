@@ -1,0 +1,61 @@
+======================================
+  AUTO SEIN - CARA BUILD APK
+  Pakai Capacitor + Node.js
+======================================
+
+SYARAT WAJIB:
+1. Node.js (sudah ada)
+2. Android Studio
+   Download: https://developer.android.com/studio
+   (Gratis, ~1GB, install biasa)
+
+======================================
+LANGKAH BUILD:
+======================================
+
+STEP 1 - Buka Terminal di folder AutoSein
+  Klik kanan di folder AutoSein
+  → "Open in Terminal" atau "Open PowerShell here"
+
+STEP 2 - Install Capacitor
+  npm install
+
+STEP 3 - Tambah Android
+  npx cap add android
+
+STEP 4 - Sync file
+  npx cap sync android
+
+STEP 5 - Buka Android Studio
+  npx cap open android
+
+STEP 6 - Di Android Studio:
+  Tunggu Gradle sync selesai (2-5 menit)
+  Lalu: Build → Build Bundle(s)/APK(s) → Build APK(s)
+
+STEP 7 - Ambil APK:
+  android/app/build/outputs/apk/debug/app-debug.apk
+
+STEP 8 - Install di HP:
+  Kirim file APK ke HP (WhatsApp / kabel USB)
+  Aktifkan "Install dari sumber tidak dikenal"
+  Install → buka app
+
+======================================
+IZIN GPS OTOMATIS (sudah include):
+  ACCESS_FINE_LOCATION
+  ACCESS_COARSE_LOCATION
+  INTERNET
+GPS minta izin otomatis saat app pertama dibuka.
+======================================
+
+CARA PAKAI APP:
+1. Buka app → tunggu GPS (pojok kanan bawah: "OK")
+2. Isi IP ESP32 (lihat Serial Monitor Arduino)
+   Hotspot: R | Password: 00000000
+3. Klik Konek
+4. Isi koordinat tujuan → GO!
+5. Rute tampil otomatis, belokan terdeteksi
+6. ESP32 nyalain buzzer+LED saat mendekati belokan
+
+======================================

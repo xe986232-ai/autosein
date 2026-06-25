@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="id"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Auto Sein</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:#0a0a0a;color:#fff;font-family:sans-serif;overflow:hidden}
+body{display:flex;flex-direction:column}
+#topbar{background:#111;border-bottom:1px solid #1e1e1e;padding:8px 10px;flex-shrink:0}
+.row{display:flex;gap:6px;margin-bottom:6px;align-items:center}
+.row:last-child{margin-bottom:0}
+input{flex:1;padding:9px 10px;background:#1a1a1a;border:1px solid #222;border-radius:8px;color:#fff;font-size:13px;outline:none;min-width:0}
+input::placeholder{color:#444}
+.btn{padding:9px 14px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.btn-green{background:#16a34a;color:#fff}
+.btn-blue{background:#2563eb;color:#fff}
+#map{flex:1;position:relative;min-height:0}
+#cards{background:#111;border-top:1px solid #1e1e1e;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;flex-shrink:0}
+.card{background:#1a1a1a;padding:8px 10px;text-align:center}
+.cl{font-size:9px;color:#444;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+.cv{font-size:20px;font-weight:800;color:#fff}
+.cv.kn{color:#facc15}.cv.ki{color:#fb923c}.cv.dim{color:#333}
+.cv.gok{color:#22c55e;font-size:12px}.cv.gbad{color:#ef4444;font-size:12px}
+#statusbar{background:#0f0f0f;padding:5px 10px;display:flex;align-items:center;gap:6px;flex-shrink:0}
+.dot{width:8px;height:8px;border-radius:50%;background:#ef4444;flex-shrink:0}
+.dot.ok{background:#22c55e}
+#stxt{font-size:11px;color:#555;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#toast{position:fixed;top:8px;left:50%;transform:translateX(-50%);background:#1e1e1e;border:1px solid #333;color:#fff;padding:6px 16px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .25s;z-index:9999;pointer-events:none;white-space:nowrap}
+#toast.show{opacity:1}
+#leg{position:absolute;top:8px;right:8px;z-index:1000;background:rgba(10,10,10,.9);border:1px solid #222;border-radius:8px;padding:6px 10px;font-size:11px;color:#888;line-height:1.8}
+#leg span{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:middle}
+</style>
+</head><body>
+<div id="topbar">
+  <div class="row">
+    <input id="iip" placeholder="IP ESP32  cth: 192.168.43.105" type="text"/>
+    <button class="btn btn-green" onclick="konek()">Konek</button>
+  </div>
+  <div class="row">
+    <input id="tlat" placeholder="Lat Tujuan  cth: -8.67890" type="number" step="any"/>
+    <input id="tlng" placeholder="Lng Tujuan  cth: 115.123" type="number" step="any"/>
+    <button class="btn btn-blue" onclick="setTujuan()">GO!</button>
+  </div>
+</div>
+<div id="map">
+  <div id="leg">
+    <div><span style="background:#2563eb"></span>Saya</div>
+    <div><span style="background:#ef4444"></span>Tujuan</div>
+    <div><span style="background:#facc15"></span>Belok Kanan</div>
+    <div><span style="background:#fb923c"></span>Belok Kiri</div>
+  </div>
+</div>
+<div id="cards">
+  <div class="card"><div class="cl">Jarak Belokan</div><div class="cv dim" id="vj">-- m</div></div>
+  <div class="card"><div class="cl">Arah Sein</div><div class="cv dim" id="vs">-</div></div>
+  <div class="card"><div class="cl">GPS</div><div class="cv gbad" id="vg">Mencari...</div></div>
+</div>
+<div id="statusbar">
+  <div class="dot" id="dot"></div>
+  <span id="stxt">Belum terhubung ke ESP32</span>
+</div>
+<div id="toast"></div>
+<script>
+var map=L.map('map',{zoomControl:false,attributionControl:false}).setView([-8.5,116.1],14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+L.control.zoom({position:'topleft'}).addTo(map);
+var iconSaya=L.divIcon({className:'',iconSize:[18,18],iconAnchor:[9,9],html:'<div style="width:18px;height:18px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 3px rgba(37,99,235,.4)"></div>'});
+var iconTujuan=L.divIcon({className:'',iconSize:[28,38],iconAnchor:[14,38],html:'<svg width="28" height="38" viewBox="0 0 28 38"><path d="M14 0C6.27 0 0 6.27 0 14c0 9.625 14 24 14 24S28 23.625 28 14C28 6.27 21.73 0 14 0z" fill="#ef4444"/><circle cx="14" cy="14" r="6" fill="#fff"/></svg>'});
+var ws=null,mSaya=null,mTujuan=null,rLine=null;
+var glat=null,glng=null,gpsOk=false;
+var bln=[],bidx=0,wsOk=false,bMarkers=[];
+if(navigator.geolocation){
+  navigator.geolocation.watchPosition(function(pos){
+    glat=pos.coords.latitude;glng=pos.coords.longitude;gpsOk=true;
+    var acc=pos.coords.accuracy?Math.round(pos.coords.accuracy)+'m':'?';
+    document.getElementById('vg').textContent='OK (+-'+acc+')';
+    document.getElementById('vg').className='cv gok';
+    if(!mSaya){mSaya=L.marker([glat,glng],{icon:iconSaya,zIndexOffset:1000}).addTo(map).bindPopup('<b>Posisi Saya</b>');map.setView([glat,glng],16);}
+    else{mSaya.setLatLng([glat,glng]);}
+    updJarak();
+  },function(err){
+    document.getElementById('vg').textContent='Error';
+    document.getElementById('vg').className='cv gbad';
+    toast('GPS error: '+err.message);
+  },{enableHighAccuracy:true,timeout:15000,maximumAge:2000});
+}
+setInterval(function(){if(ws&&ws.readyState===1&&gpsOk)ws.send(JSON.stringify({type:'posisi',lat:glat,lng:glng}));},1500);
+function updJarak(){
+  if(!bln.length||bidx>=bln.length||!gpsOk)return;
+  var b=bln[bidx],d=hav(glat,glng,b.lat,b.lng);
+  document.getElementById('vj').textContent=d<1000?Math.round(d)+' m':(d/1000).toFixed(1)+' km';
+  document.getElementById('vj').className='cv';
+  var el=document.getElementById('vs');
+  if(d<50){if(b.arah===1){el.textContent='> KANAN';el.className='cv kn';}else{el.textContent='< KIRI';el.className='cv ki';}}
+  else{el.textContent='-';el.className='cv dim';}
+  if(d<8){bidx++;if(bidx>=bln.length){toast('Sampai tujuan!');if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'sampai'}));document.getElementById('vj').textContent='-- m';document.getElementById('vj').className='cv dim';document.getElementById('vs').textContent='-';document.getElementById('vs').className='cv dim';}}
+}
+function konek(){
+  var ip=document.getElementById('iip').value.trim();
+  if(!ip){toast('Masukkan IP ESP32!');return;}
+  if(ws){try{ws.close();}catch(e){}}
+  wsOk=false;setSt('Menghubungkan ke '+ip+'...',false);
+  var tmr=setTimeout(function(){if(!wsOk){toast('Timeout');setSt('Timeout',false);}},10000);
+  try{ws=new WebSocket('ws://'+ip+':81');}catch(e){toast('Error: '+e.message);return;}
+  ws.onopen=function(){clearTimeout(tmr);wsOk=true;setSt('Terhubung ('+ip+')',true);toast('ESP32 terhubung!');if(ws.readyState===1)ws.send(JSON.stringify({type:'reset'}));bln.forEach(function(b){ws.send(JSON.stringify({type:'belokan',lat:b.lat,lng:b.lng,arah:b.arah}));});};
+  ws.onclose=function(){wsOk=false;clearTimeout(tmr);setSt('Terputus',false);toast('Koneksi terputus');};
+  ws.onerror=function(){toast('Error koneksi');setSt('Error',false);};
+  ws.onmessage=function(ev){try{var d=JSON.parse(ev.data);if(d.jarak!==undefined){document.getElementById('vj').textContent=d.jarak+' m';document.getElementById('vj').className='cv';}if(d.arah!==undefined){var el=document.getElementById('vs');if(d.arah===1){el.textContent='> KANAN';el.className='cv kn';}else if(d.arah===2){el.textContent='< KIRI';el.className='cv ki';}else{el.textContent='-';el.className='cv dim';}}}catch(e){}};
+}
+function setTujuan(){
+  var la=parseFloat(document.getElementById('tlat').value),lo=parseFloat(document.getElementById('tlng').value);
+  if(isNaN(la)||isNaN(lo)){toast('Isi koordinat tujuan!');return;}
+  if(!gpsOk){toast('Tunggu GPS siap dulu!');return;}
+  if(mTujuan)map.removeLayer(mTujuan);
+  mTujuan=L.marker([la,lo],{icon:iconTujuan}).addTo(map).bindPopup('<b>Tujuan</b>').openPopup();
+  bMarkers.forEach(function(m){map.removeLayer(m);});bMarkers=[];
+  if(rLine)map.removeLayer(rLine);
+  bln=[];bidx=0;
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'reset'}));
+  toast('Menghitung rute...');
+  fetch('https://router.project-osrm.org/route/v1/driving/'+glng+','+glat+';'+lo+','+la+'?steps=true&geometries=geojson')
+  .then(function(r){return r.json();})
+  .then(function(data){
+    if(data.code!=='Ok'){toast('Rute tidak ditemukan!');return;}
+    var coords=data.routes[0].geometry.coordinates.map(function(c){return[c[1],c[0]];});
+    rLine=L.polyline(coords,{color:'#2563eb',weight:6,opacity:.85,lineJoin:'round'}).addTo(map);
+    map.fitBounds(rLine.getBounds(),{padding:[60,60]});
+    data.routes[0].legs[0].steps.forEach(function(step){
+      var m=step.maneuver,arah=0;
+      if(m.modifier&&m.modifier.indexOf('right')>=0)arah=1;
+      else if(m.modifier&&m.modifier.indexOf('left')>=0)arah=2;
+      if(!arah)return;
+      var bLat=m.location[1],bLng=m.location[0];
+      bln.push({lat:bLat,lng:bLng,arah:arah});
+      var mk=L.circleMarker([bLat,bLng],{radius:7,color:arah===1?'#facc15':'#fb923c',fillColor:arah===1?'#facc15':'#fb923c',fillOpacity:1,weight:2}).bindPopup(arah===1?'Belok Kanan':'Belok Kiri').addTo(map);
+      bMarkers.push(mk);
+      if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'belokan',lat:bLat,lng:bLng,arah:arah}));
+    });
+    toast('Rute siap! '+bln.length+' belokan');
+  })
+  .catch(function(e){toast('Error: '+e.message);});
+}
+function hav(a1,o1,a2,o2){var R=6371000,da=(a2-a1)*Math.PI/180,do_=(o2-o1)*Math.PI/180;var x=Math.sin(da/2)*Math.sin(da/2)+Math.cos(a1*Math.PI/180)*Math.cos(a2*Math.PI/180)*Math.sin(do_/2)*Math.sin(do_/2);return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
+function setSt(t,ok){document.getElementById('stxt').textContent=t;document.getElementById('dot').className='dot'+(ok?' ok':'');}
+function toast(msg){var el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(el._t);el._t=setTimeout(function(){el.classList.remove('show');},2800);}
+</script>
+</body></html>
