@@ -63,31 +63,78 @@ input::placeholder{color:#444}
   <span id="stxt">Belum terhubung ke ESP32</span>
 </div>
 <div id="toast"></div>
-<script>
+
+<script type="module">
+import { Geolocation } from 'https://cdn.jsdelivr.net/npm/@capacitor/geolocation@6/+esm';
+
 var map=L.map('map',{zoomControl:false,attributionControl:false}).setView([-8.5,116.1],14);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 L.control.zoom({position:'topleft'}).addTo(map);
+
 var iconSaya=L.divIcon({className:'',iconSize:[18,18],iconAnchor:[9,9],html:'<div style="width:18px;height:18px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 3px rgba(37,99,235,.4)"></div>'});
 var iconTujuan=L.divIcon({className:'',iconSize:[28,38],iconAnchor:[14,38],html:'<svg width="28" height="38" viewBox="0 0 28 38"><path d="M14 0C6.27 0 0 6.27 0 14c0 9.625 14 24 14 24S28 23.625 28 14C28 6.27 21.73 0 14 0z" fill="#ef4444"/><circle cx="14" cy="14" r="6" fill="#fff"/></svg>'});
+
 var ws=null,mSaya=null,mTujuan=null,rLine=null;
 var glat=null,glng=null,gpsOk=false;
 var bln=[],bidx=0,wsOk=false,bMarkers=[];
-if(navigator.geolocation){
-  navigator.geolocation.watchPosition(function(pos){
-    glat=pos.coords.latitude;glng=pos.coords.longitude;gpsOk=true;
-    var acc=pos.coords.accuracy?Math.round(pos.coords.accuracy)+'m':'?';
-    document.getElementById('vg').textContent='OK (+-'+acc+')';
-    document.getElementById('vg').className='cv gok';
-    if(!mSaya){mSaya=L.marker([glat,glng],{icon:iconSaya,zIndexOffset:1000}).addTo(map).bindPopup('<b>Posisi Saya</b>');map.setView([glat,glng],16);}
-    else{mSaya.setLatLng([glat,glng]);}
-    updJarak();
-  },function(err){
-    document.getElementById('vg').textContent='Error';
-    document.getElementById('vg').className='cv gbad';
-    toast('GPS error: '+err.message);
-  },{enableHighAccuracy:true,timeout:15000,maximumAge:2000});
+
+// GPS pakai Capacitor Geolocation - minta izin otomatis
+async function startGPS() {
+  try {
+    // Minta izin dulu
+    const perm = await Geolocation.requestPermissions();
+    if (perm.location !== 'granted') {
+      toast('Izin GPS ditolak!');
+      document.getElementById('vg').textContent='Ditolak';
+      document.getElementById('vg').className='cv gbad';
+      return;
+    }
+    // Watch position
+    await Geolocation.watchPosition({
+      enableHighAccuracy: true,
+      timeout: 15000
+    }, (pos, err) => {
+      if (err) {
+        document.getElementById('vg').textContent='Error';
+        document.getElementById('vg').className='cv gbad';
+        return;
+      }
+      glat=pos.coords.latitude;
+      glng=pos.coords.longitude;
+      gpsOk=true;
+      var acc=pos.coords.accuracy?Math.round(pos.coords.accuracy)+'m':'?';
+      document.getElementById('vg').textContent='OK (+-'+acc+')';
+      document.getElementById('vg').className='cv gok';
+      if(!mSaya){
+        mSaya=L.marker([glat,glng],{icon:iconSaya,zIndexOffset:1000}).addTo(map).bindPopup('<b>Posisi Saya</b>');
+        map.setView([glat,glng],16);
+      } else { mSaya.setLatLng([glat,glng]); }
+      updJarak();
+    });
+  } catch(e) {
+    // Fallback ke navigator.geolocation
+    if(navigator.geolocation){
+      navigator.geolocation.watchPosition(function(pos){
+        glat=pos.coords.latitude;glng=pos.coords.longitude;gpsOk=true;
+        var acc=pos.coords.accuracy?Math.round(pos.coords.accuracy)+'m':'?';
+        document.getElementById('vg').textContent='OK (+-'+acc+')';
+        document.getElementById('vg').className='cv gok';
+        if(!mSaya){mSaya=L.marker([glat,glng],{icon:iconSaya,zIndexOffset:1000}).addTo(map).bindPopup('<b>Posisi Saya</b>');map.setView([glat,glng],16);}
+        else{mSaya.setLatLng([glat,glng]);}
+        updJarak();
+      },function(err){
+        document.getElementById('vg').textContent='Error';
+        document.getElementById('vg').className='cv gbad';
+        toast('GPS: '+err.message);
+      },{enableHighAccuracy:true,timeout:15000,maximumAge:2000});
+    }
+  }
 }
+
+startGPS();
+
 setInterval(function(){if(ws&&ws.readyState===1&&gpsOk)ws.send(JSON.stringify({type:'posisi',lat:glat,lng:glng}));},1500);
+
 function updJarak(){
   if(!bln.length||bidx>=bln.length||!gpsOk)return;
   var b=bln[bidx],d=hav(glat,glng,b.lat,b.lng);
@@ -98,7 +145,8 @@ function updJarak(){
   else{el.textContent='-';el.className='cv dim';}
   if(d<8){bidx++;if(bidx>=bln.length){toast('Sampai tujuan!');if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'sampai'}));document.getElementById('vj').textContent='-- m';document.getElementById('vj').className='cv dim';document.getElementById('vs').textContent='-';document.getElementById('vs').className='cv dim';}}
 }
-function konek(){
+
+window.konek = function(){
   var ip=document.getElementById('iip').value.trim();
   if(!ip){toast('Masukkan IP ESP32!');return;}
   if(ws){try{ws.close();}catch(e){}}
@@ -110,7 +158,8 @@ function konek(){
   ws.onerror=function(){toast('Error koneksi');setSt('Error',false);};
   ws.onmessage=function(ev){try{var d=JSON.parse(ev.data);if(d.jarak!==undefined){document.getElementById('vj').textContent=d.jarak+' m';document.getElementById('vj').className='cv';}if(d.arah!==undefined){var el=document.getElementById('vs');if(d.arah===1){el.textContent='> KANAN';el.className='cv kn';}else if(d.arah===2){el.textContent='< KIRI';el.className='cv ki';}else{el.textContent='-';el.className='cv dim';}}}catch(e){}};
 }
-function setTujuan(){
+
+window.setTujuan = function(){
   var la=parseFloat(document.getElementById('tlat').value),lo=parseFloat(document.getElementById('tlng').value);
   if(isNaN(la)||isNaN(lo)){toast('Isi koordinat tujuan!');return;}
   if(!gpsOk){toast('Tunggu GPS siap dulu!');return;}
@@ -143,6 +192,7 @@ function setTujuan(){
   })
   .catch(function(e){toast('Error: '+e.message);});
 }
+
 function hav(a1,o1,a2,o2){var R=6371000,da=(a2-a1)*Math.PI/180,do_=(o2-o1)*Math.PI/180;var x=Math.sin(da/2)*Math.sin(da/2)+Math.cos(a1*Math.PI/180)*Math.cos(a2*Math.PI/180)*Math.sin(do_/2)*Math.sin(do_/2);return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
 function setSt(t,ok){document.getElementById('stxt').textContent=t;document.getElementById('dot').className='dot'+(ok?' ok':'');}
 function toast(msg){var el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(el._t);el._t=setTimeout(function(){el.classList.remove('show');},2800);}
