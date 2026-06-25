@@ -3,11 +3,10 @@
   "appName": "Auto Sein",
   "webDir": "www",
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "cleartext": true
   },
-  "plugins": {
-    "Geolocation": {
-      "permissions": ["location"]
-    }
+  "android": {
+    "allowMixedContent": true
   }
 }
