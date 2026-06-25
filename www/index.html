@@ -68,7 +68,7 @@ input::placeholder{color:#444}
 import { Geolocation } from 'https://cdn.jsdelivr.net/npm/@capacitor/geolocation@6/+esm';
 
 var map=L.map('map',{zoomControl:false,attributionControl:false}).setView([-8.5,116.1],14);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}').addTo(map);
 L.control.zoom({position:'topleft'}).addTo(map);
 
 var iconSaya=L.divIcon({className:'',iconSize:[18,18],iconAnchor:[9,9],html:'<div style="width:18px;height:18px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 3px rgba(37,99,235,.4)"></div>'});
