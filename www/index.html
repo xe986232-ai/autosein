@@ -17,6 +17,8 @@ input::placeholder{color:#444}
 .btn{padding:9px 14px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0}
 .btn-green{background:#16a34a;color:#fff}
 .btn-blue{background:#2563eb;color:#fff}
+.btn-orange{background:#ea580c;color:#fff}
+.btn-gray{background:#374151;color:#fff}
 #map{flex:1;position:relative;min-height:0}
 #cards{background:#111;border-top:1px solid #1e1e1e;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;flex-shrink:0}
 .card{background:#1a1a1a;padding:8px 10px;text-align:center}
@@ -33,6 +35,18 @@ input::placeholder{color:#444}
 #toast.show{opacity:1}
 #leg{position:absolute;top:8px;right:8px;z-index:1000;background:rgba(10,10,10,.9);border:1px solid #222;border-radius:8px;padding:6px 10px;font-size:11px;color:#888;line-height:1.8}
 #leg span{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:middle}
+/* Panel waypoint */
+#wpanel{position:absolute;bottom:0;left:0;right:0;z-index:1000;background:rgba(10,10,10,.97);border-top:1px solid #222;padding:8px 10px;display:none;max-height:160px;overflow-y:auto}
+#wpanel.show{display:block}
+#wlist{font-size:11px;color:#888;margin-bottom:6px}
+.witem{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #1a1a1a}
+.wnum{width:18px;height:18px;border-radius:50%;background:#ea580c;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.wcoord{flex:1;font-size:10px;color:#aaa}
+.wdel{background:none;border:none;color:#ef4444;font-size:14px;cursor:pointer;padding:0 4px}
+/* Tombol mode waypoint di peta */
+#btnWP{position:absolute;bottom:12px;left:12px;z-index:1000;padding:8px 14px;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;background:#ea580c;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.5)}
+#btnWP.aktif{background:#ef4444;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
 </style>
 </head><body>
 <div id="topbar">
@@ -44,14 +58,22 @@ input::placeholder{color:#444}
     <input id="tlat" placeholder="Lat Tujuan  cth: -8.67890" type="number" step="any"/>
     <input id="tlng" placeholder="Lng Tujuan  cth: 115.123" type="number" step="any"/>
     <button class="btn btn-blue" onclick="setTujuan()">GO!</button>
+    <button class="btn btn-gray" onclick="toggleWpanel()" id="btnWpList" title="Waypoint">📍</button>
   </div>
 </div>
 <div id="map">
   <div id="leg">
     <div><span style="background:#2563eb"></span>Saya</div>
     <div><span style="background:#ef4444"></span>Tujuan</div>
+    <div><span style="background:#ea580c"></span>Waypoint</div>
     <div><span style="background:#facc15"></span>Belok Kanan</div>
     <div><span style="background:#fb923c"></span>Belok Kiri</div>
+  </div>
+  <!-- Tombol mode tambah waypoint -->
+  <button id="btnWP" onclick="toggleModeWP()">+ Waypoint</button>
+  <!-- Panel daftar waypoint -->
+  <div id="wpanel">
+    <div id="wlist">Belum ada waypoint. Tap "+ Waypoint" lalu tap lokasi di peta.</div>
   </div>
 </div>
 <div id="cards">
@@ -79,113 +101,124 @@ var ws=null,mSaya=null,mTujuan=null,rLine=null;
 var glat=null,glng=null,gpsOk=false;
 var bln=[],bidx=0,wsOk=false,bMarkers=[];
 
-// ─── Adaptive Accuracy Threshold ────────────────────────────────────────────
-// Di area terbuka GPS bisa < 10m, di kota padat bisa 30-50m.
-// Daripada pakai batas keras 20m yang sering gagal di kota,
-// sistem ini belajar dari kondisi lokal secara real-time.
-var accHistory = [];          // riwayat 10 reading terakhir
-var adaptiveThreshold = 20;   // mulai dari 20m, akan menyesuaikan
-var lastSentTime = 0;
+// ─── Waypoint ────────────────────────────────────────────────────────────────
+var waypoints=[];      // [{lat,lng,marker}]
+var modeWP=false;      // mode tap-to-add waypoint
 
-function updateAdaptiveThreshold(acc) {
+window.toggleModeWP = function(){
+  modeWP = !modeWP;
+  var btn = document.getElementById('btnWP');
+  if(modeWP){
+    btn.textContent='✓ Tap Peta';
+    btn.classList.add('aktif');
+    toast('Tap lokasi di peta untuk tambah waypoint');
+  } else {
+    btn.textContent='+ Waypoint';
+    btn.classList.remove('aktif');
+  }
+}
+
+window.toggleWpanel = function(){
+  var p = document.getElementById('wpanel');
+  p.classList.toggle('show');
+  renderWpanel();
+}
+
+function renderWpanel(){
+  var el = document.getElementById('wlist');
+  if(!waypoints.length){
+    el.innerHTML='Belum ada waypoint. Tap "+ Waypoint" lalu tap lokasi di peta.';
+    return;
+  }
+  var html='';
+  waypoints.forEach(function(w,i){
+    html+='<div class="witem">'
+      +'<div class="wnum">'+(i+1)+'</div>'
+      +'<div class="wcoord">'+w.lat.toFixed(5)+', '+w.lng.toFixed(5)+'</div>'
+      +'<button class="wdel" onclick="hapusWP('+i+')">✕</button>'
+      +'</div>';
+  });
+  el.innerHTML=html;
+}
+
+window.hapusWP = function(i){
+  if(waypoints[i] && waypoints[i].marker) map.removeLayer(waypoints[i].marker);
+  waypoints.splice(i,1);
+  renderWpanel();
+  toast('Waypoint '+(i+1)+' dihapus');
+}
+
+// Tap peta: kalau mode WP aktif → tambah waypoint, bukan zoom
+map.on('click', function(e){
+  if(!modeWP) return;
+  var lat=e.latlng.lat, lng=e.latlng.lng;
+  var num = waypoints.length+1;
+  var icon=L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],
+    html:'<div style="width:24px;height:24px;border-radius:50%;background:#ea580c;border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff">'+num+'</div>'});
+  var mk=L.marker([lat,lng],{icon:icon,draggable:true}).addTo(map)
+    .bindPopup('Waypoint '+num+'<br><small>'+lat.toFixed(5)+', '+lng.toFixed(5)+'</small>');
+  // Bisa drag untuk fine-tune posisi
+  mk.on('dragend',function(){
+    var pos=mk.getLatLng();
+    waypoints[num-1].lat=pos.lat;
+    waypoints[num-1].lng=pos.lng;
+    renderWpanel();
+  });
+  waypoints.push({lat:lat,lng:lng,marker:mk});
+  renderWpanel();
+  // Otomatis tampilkan panel
+  document.getElementById('wpanel').classList.add('show');
+  toast('Waypoint '+num+' ditambahkan');
+});
+
+// ─── Adaptive Accuracy Threshold ─────────────────────────────────────────────
+var accHistory=[], adaptiveThreshold=20;
+
+function updateAdaptiveThreshold(acc){
   accHistory.push(acc);
-  if (accHistory.length > 10) accHistory.shift();
-
-  // Ambil median dari riwayat
-  var sorted = accHistory.slice().sort(function(a,b){return a-b;});
-  var median = sorted[Math.floor(sorted.length/2)];
-
-  // Threshold = median * 1.5, dibatasi antara 20m dan 50m
-  // Logika: jika kondisi GPS memang jelek, longgarkan batas
-  // agar data tetap mengalir, tapi jangan terlalu longgar
-  var newThreshold = Math.min(50, Math.max(20, median * 1.5));
-
-  // Update perlahan (smooth), tidak langsung lompat
-  adaptiveThreshold = adaptiveThreshold * 0.7 + newThreshold * 0.3;
+  if(accHistory.length>10) accHistory.shift();
+  var sorted=accHistory.slice().sort(function(a,b){return a-b;});
+  var median=sorted[Math.floor(sorted.length/2)];
+  var newThr=Math.min(50,Math.max(20,median*1.5));
+  adaptiveThreshold=adaptiveThreshold*0.7+newThr*0.3;
 }
+function shouldSendGPS(acc){updateAdaptiveThreshold(acc);return acc<=adaptiveThreshold;}
 
-function shouldSendGPS(acc) {
-  updateAdaptiveThreshold(acc);
-  return acc <= adaptiveThreshold;
-}
-// ────────────────────────────────────────────────────────────────────────────
-
-async function startGPS() {
-  try {
-    const perm = await Geolocation.requestPermissions();
-    if (perm.location !== 'granted') {
-      toast('Izin GPS ditolak!');
-      document.getElementById('vg').textContent='Ditolak';
-      document.getElementById('vg').className='cv gbad';
-      return;
-    }
-    await Geolocation.watchPosition({
-      enableHighAccuracy: true,
-      timeout: 15000
-    }, function(pos, err) {
-      if (err) {
-        document.getElementById('vg').textContent='Error';
-        document.getElementById('vg').className='cv gbad';
-        return;
-      }
+// ─── GPS ─────────────────────────────────────────────────────────────────────
+async function startGPS(){
+  try{
+    const perm=await Geolocation.requestPermissions();
+    if(perm.location!=='granted'){toast('Izin GPS ditolak!');document.getElementById('vg').textContent='Ditolak';document.getElementById('vg').className='cv gbad';return;}
+    await Geolocation.watchPosition({enableHighAccuracy:true,timeout:15000},function(pos,err){
+      if(err){document.getElementById('vg').textContent='Error';document.getElementById('vg').className='cv gbad';return;}
       handleGPSUpdate(pos);
     });
-  } catch(e) {
+  }catch(e){
     if(navigator.geolocation){
-      navigator.geolocation.watchPosition(
-        function(pos){ handleGPSUpdate(pos); },
-        function(err){
-          document.getElementById('vg').textContent='Error';
-          document.getElementById('vg').className='cv gbad';
-          toast('GPS: '+err.message);
-        },
-        {enableHighAccuracy:true,timeout:15000,maximumAge:2000}
-      );
+      navigator.geolocation.watchPosition(function(pos){handleGPSUpdate(pos);},function(err){document.getElementById('vg').textContent='Error';document.getElementById('vg').className='cv gbad';toast('GPS: '+err.message);},{enableHighAccuracy:true,timeout:15000,maximumAge:2000});
     }
   }
 }
 
-function handleGPSUpdate(pos) {
-  var lat = pos.coords.latitude;
-  var lng = pos.coords.longitude;
-  var acc = pos.coords.accuracy ? pos.coords.accuracy : 999;
-
-  // Selalu tampilkan posisi di peta tanpa syarat akurasi
-  // (agar pengguna tetap melihat posisi meski GPS sedang buruk)
-  glat = lat;
-  glng = lng;
-  if(!mSaya){
-    mSaya=L.marker([glat,glng],{icon:iconSaya,zIndexOffset:1000}).addTo(map).bindPopup('<b>Posisi Saya</b>');
-    map.setView([glat,glng],16);
-  } else { mSaya.setLatLng([glat,glng]); }
+function handleGPSUpdate(pos){
+  var lat=pos.coords.latitude,lng=pos.coords.longitude,acc=pos.coords.accuracy?pos.coords.accuracy:999;
+  glat=lat;glng=lng;
+  if(!mSaya){mSaya=L.marker([glat,glng],{icon:iconSaya,zIndexOffset:1000}).addTo(map).bindPopup('<b>Posisi Saya</b>');map.setView([glat,glng],16);}
+  else{mSaya.setLatLng([glat,glng]);}
   updJarak();
-
-  var thr = Math.round(adaptiveThreshold);
-  updateAdaptiveThreshold(acc); // update threshold dari reading ini
-
-  if (shouldSendGPS(acc)) {
-    // Akurasi lolos threshold → kirim ke ESP32, tandai GPS hijau
-    gpsOk = true;
+  updateAdaptiveThreshold(acc);
+  if(shouldSendGPS(acc)){
+    gpsOk=true;
     document.getElementById('vg').textContent='OK (±'+Math.round(acc)+'m)';
     document.getElementById('vg').className='cv gok';
   } else {
-    // Akurasi di luar threshold → tahan pengiriman, tandai GPS kuning
-    // Posisi di peta tetap diupdate, tapi ESP32 tidak dibanjiri data buruk
     document.getElementById('vg').textContent='Lemah ('+Math.round(acc)+'m)';
     document.getElementById('vg').className='cv gyellow';
-    // gpsOk tetap true jika sebelumnya sudah pernah dapat sinyal bagus,
-    // sehingga fitur rute & tujuan tidak terblokir
   }
 }
 
 startGPS();
-
-// Kirim posisi ke ESP32 hanya jika GPS OK (lolos threshold adaptif)
-setInterval(function(){
-  if(ws&&ws.readyState===1&&gpsOk&&glat!==null){
-    ws.send(JSON.stringify({type:'posisi',lat:glat,lng:glng}));
-  }
-},1500);
+setInterval(function(){if(ws&&ws.readyState===1&&gpsOk&&glat!==null)ws.send(JSON.stringify({type:'posisi',lat:glat,lng:glng}));},1500);
 
 function updJarak(){
   if(!bln.length||bidx>=bln.length||!gpsOk)return;
@@ -198,7 +231,7 @@ function updJarak(){
   if(d<8){bidx++;if(bidx>=bln.length){toast('Sampai tujuan!');if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'sampai'}));document.getElementById('vj').textContent='-- m';document.getElementById('vj').className='cv dim';document.getElementById('vs').textContent='-';document.getElementById('vs').className='cv dim';}}
 }
 
-window.konek = function(){
+window.konek=function(){
   var ip=document.getElementById('iip').value.trim();
   if(!ip){toast('Masukkan IP ESP32!');return;}
   if(ws){try{ws.close();}catch(e){}}
@@ -211,7 +244,7 @@ window.konek = function(){
   ws.onmessage=function(ev){try{var d=JSON.parse(ev.data);if(d.jarak!==undefined){document.getElementById('vj').textContent=d.jarak+' m';document.getElementById('vj').className='cv';}if(d.arah!==undefined){var el=document.getElementById('vs');if(d.arah===1){el.textContent='> KANAN';el.className='cv kn';}else if(d.arah===2){el.textContent='< KIRI';el.className='cv ki';}else{el.textContent='-';el.className='cv dim';}}}catch(e){}};
 }
 
-window.setTujuan = function(){
+window.setTujuan=function(){
   var la=parseFloat(document.getElementById('tlat').value),lo=parseFloat(document.getElementById('tlng').value);
   if(isNaN(la)||isNaN(lo)){toast('Isi koordinat tujuan!');return;}
   if(!gpsOk){toast('Tunggu GPS siap dulu!');return;}
@@ -222,25 +255,42 @@ window.setTujuan = function(){
   bln=[];bidx=0;
   if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'reset'}));
   toast('Menghitung rute...');
-  fetch('https://router.project-osrm.org/route/v1/driving/'+glng+','+glat+';'+lo+','+la+'?steps=true&geometries=geojson')
+
+  // ── Susun koordinat: posisi → waypoints → tujuan ──────────────────────────
+  var coords=glng+','+glat;
+  waypoints.forEach(function(w){coords+=';'+w.lng+','+w.lat;});
+  coords+=';'+lo+','+la;
+
+  fetch('https://router.project-osrm.org/route/v1/driving/'+coords+'?steps=true&geometries=geojson')
   .then(function(r){return r.json();})
   .then(function(data){
     if(data.code!=='Ok'){toast('Rute tidak ditemukan!');return;}
-    var coords=data.routes[0].geometry.coordinates.map(function(c){return[c[1],c[0]];});
-    rLine=L.polyline(coords,{color:'#2563eb',weight:6,opacity:.85,lineJoin:'round'}).addTo(map);
-    map.fitBounds(rLine.getBounds(),{padding:[60,60]});
-    data.routes[0].legs[0].steps.forEach(function(step){
-      var m=step.maneuver,arah=0;
-      if(m.modifier&&m.modifier.indexOf('right')>=0)arah=1;
-      else if(m.modifier&&m.modifier.indexOf('left')>=0)arah=2;
-      if(!arah)return;
-      var bLat=m.location[1],bLng=m.location[0];
-      bln.push({lat:bLat,lng:bLng,arah:arah});
-      var mk=L.circleMarker([bLat,bLng],{radius:7,color:arah===1?'#facc15':'#fb923c',fillColor:arah===1?'#facc15':'#fb923c',fillOpacity:1,weight:2}).bindPopup(arah===1?'Belok Kanan':'Belok Kiri').addTo(map);
-      bMarkers.push(mk);
-      if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'belokan',lat:bLat,lng:bLng,arah:arah}));
+    // Gabungkan semua legs kalau ada waypoint
+    var allCoords=[];
+    data.routes[0].legs.forEach(function(leg){
+      leg.steps.forEach(function(step){
+        step.geometry.coordinates.forEach(function(c){allCoords.push([c[1],c[0]]);});
+      });
     });
-    toast('Rute siap! '+bln.length+' belokan');
+    if(rLine)map.removeLayer(rLine);
+    rLine=L.polyline(allCoords,{color:'#2563eb',weight:6,opacity:.85,lineJoin:'round'}).addTo(map);
+    map.fitBounds(rLine.getBounds(),{padding:[60,60]});
+    // Kumpulkan semua belokan dari semua legs
+    data.routes[0].legs.forEach(function(leg){
+      leg.steps.forEach(function(step){
+        var m=step.maneuver,arah=0;
+        if(m.modifier&&m.modifier.indexOf('right')>=0)arah=1;
+        else if(m.modifier&&m.modifier.indexOf('left')>=0)arah=2;
+        if(!arah)return;
+        var bLat=m.location[1],bLng=m.location[0];
+        bln.push({lat:bLat,lng:bLng,arah:arah});
+        var mk=L.circleMarker([bLat,bLng],{radius:7,color:arah===1?'#facc15':'#fb923c',fillColor:arah===1?'#facc15':'#fb923c',fillOpacity:1,weight:2}).bindPopup(arah===1?'Belok Kanan':'Belok Kiri').addTo(map);
+        bMarkers.push(mk);
+        if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'belokan',lat:bLat,lng:bLng,arah:arah}));
+      });
+    });
+    var wpInfo=waypoints.length?' via '+waypoints.length+' waypoint':'';
+    toast('Rute siap'+wpInfo+'! '+bln.length+' belokan');
   })
   .catch(function(e){toast('Error: '+e.message);});
 }
